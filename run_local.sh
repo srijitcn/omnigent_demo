@@ -15,6 +15,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Seed the (gitignored) runtime ontology file from the template on first run.
+[ -f ontology_context.md ] || cp ontology_context.md.template ontology_context.md 2>/dev/null || true
+
 PROFILE="${DATABRICKS_PROFILE:-DEFAULT}"
 
 # WORKSPACE_NAME = the profile's workspace host (no scheme / trailing slash),

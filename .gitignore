@@ -12,8 +12,16 @@ venv/
 # Omnigent local state / logs (if any land in the app dir)
 .omnigent/
 
-# Agent-generated demo OUTPUTS — regenerate by running ontogent. Excluded to
-# keep the repo to the orchestrator itself and to avoid committing
-# workspace-specific artifacts (e.g. a hardcoded workspace host in generated code).
+# Runtime ontology context — ontogent rewrites it every run. The repo ships
+# ontology_context.md.template; the live file is seeded from it and not tracked.
+ontology_context.md
+
+# Generated output — every project/asset ontogent builds lives under output/
+# (gitignored, so the repo stays just the orchestrator). The folder itself is
+# kept via .gitkeep so it exists in a fresh clone.
+output/*
+!output/.gitkeep
+
+# Legacy ad-hoc output folders from earlier runs (superseded by output/).
 demo1/
 books_app/

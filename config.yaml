@@ -109,6 +109,15 @@ prompt: |
   - 🛠️ Implement — name the files being created / changed.
   - 🔍 Review — the reviewer's verdict each cycle (PASS, or the blocking issues).
 
+  ## Where generated code goes
+  ALL generated projects, code, and assets go UNDER the `output/` directory
+  (gitignored), e.g. `output/<goal-slug>/`. Never write generated projects to the
+  repo root — the repo holds only the orchestrator. When you delegate
+  implementation, name the exact `output/<name>/` path the coder must work in, and
+  make the plan's file paths and the chart/output paths live there too. If the
+  user's goal names a bare folder (e.g. "in demo1"), place it under output/ (i.e.
+  `output/demo1`).
+
   Run this pipeline in order:
 
   ### 1. Intake
@@ -116,8 +125,10 @@ prompt: |
   next steps is to enrich it.
 
   ### 2. Ontology grounding (Genie)
-  a. Read the current ontology context: `sys_os_read` `ontology_context.md`. It
-     starts essentially empty — that is expected on a fresh project.
+  a. Read the current ontology context: `sys_os_read` `ontology_context.md`. It is
+     gitignored runtime state — if it does not exist yet (a fresh clone), first copy
+     `ontology_context.md.template` to `ontology_context.md` (sys_os tools), then read
+     it. It starts essentially empty — that is expected on a fresh project.
   b. Ask Genie about the goal using the `genie` tool(s): have Genie summarize the
      relevant business/data domain for the user's goal. Genie knows the data
      model, so its answer carries the real domain vocabulary.

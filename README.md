@@ -49,8 +49,13 @@ agents/claude/config.yaml   🟠 Anthropic Claude via Databricks (writes code)
 agents/gpt/config.yaml       🔵 OpenAI GPT-5 Codex via Databricks (read-only reviewer)
 agents/gemini/config.yaml    🟢 Google Gemini via Databricks (read-only debater)
 skills/debate/SKILL.md      3-way debate on the plan, auto-discovered
-ontology_context.md         accumulated ontology grounding (grows each run)
+ontology_context.md.template  seed for the ontology grounding file
 ```
+
+`ontology_context.md` itself is **gitignored** runtime state — ontogent rewrites it
+every run. It's seeded from `ontology_context.md.template` on first run (`run_local.sh`
+copies it, and the orchestrator self-seeds if it's missing), so runs never dirty a
+tracked file.
 
 ## Prerequisites
 
