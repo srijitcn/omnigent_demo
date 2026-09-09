@@ -8,8 +8,9 @@
 #
 # On a Databricks-managed sandbox, Omnigent + its deps are already baked into the
 # image and credentials are ambient — this script confirms that reality and tells
-# you exactly what (if anything) still needs setting (usually just WORKSPACE_NAME
-# for the Genie MCP). Run it from the ontogent app directory:
+# you exactly what (if anything) still needs setting. The Genie MCP host is written
+# into config.yaml by ./run_local.sh (the runner scrubs env vars, so it can't be
+# one); this script checks that a host is resolvable. Run it from the app directory:
 #
 #   ./verify_sandbox.sh
 #
@@ -59,18 +60,29 @@ else
   fail "no python interpreter found to check harness SDKs"
 fi
 
-# ------------------------------------------------------ env vars & auth profile
-section "Environment & Databricks profile"
-WS="$(printenv WORKSPACE_NAME 2>/dev/null || true)"
+# --------------------------------------------- Genie MCP host & auth profile
+section "Genie MCP host & Databricks profile"
 # The profile the agent configs authenticate with (models AND the Genie MCP).
 CFG_PROFILE="$(awk '/^[[:space:]]*profile:/ {v=$2; sub(/#.*/,"",v); print v; exit}' config.yaml 2>/dev/null)"
 CFG_PROFILE="${CFG_PROFILE:-DEFAULT}"
 
-# WORKSPACE_NAME (host) is the ONLY env var still needed — for the Genie MCP URL.
-if [ -n "$WS" ]; then
-  ok "WORKSPACE_NAME is set ($WS)   # Genie MCP host"
+# The Genie MCP host is a LITERAL in config.yaml (env vars are scrubbed from the
+# runner). ./run_local.sh writes it in from the profile before running; here we
+# check (a) what's currently in config.yaml, and (b) that a host is resolvable.
+GENIE_HOST="$(awk -F'://' '/^[[:space:]]*url:.*\/api\/2\.0\/mcp\/genie/ {split($2,a,"/"); print a[1]; exit}' config.yaml 2>/dev/null)"
+RESOLVED_HOST="$(awk -v p="[$CFG_PROFILE]" '
+  $0==p{f=1;next} /^\[/{f=0}
+  f && /^host/ {sub(/^host[[:space:]]*=[[:space:]]*/,""); print; exit}
+' "$HOME/.databrickscfg" 2>/dev/null)"
+RESOLVED_HOST="${RESOLVED_HOST:-${DATABRICKS_HOST:-}}"
+RESOLVED_HOST="${RESOLVED_HOST#http*://}"; RESOLVED_HOST="${RESOLVED_HOST%/}"
+
+if [ -n "$GENIE_HOST" ] && [ "$GENIE_HOST" != "<workspace-host>" ]; then
+  ok "genie_one URL host is set in config.yaml ($GENIE_HOST)"
+elif [ -n "$RESOLVED_HOST" ]; then
+  warn "genie_one URL is still the <workspace-host> placeholder — ./run_local.sh will write '$RESOLVED_HOST' (profile '$CFG_PROFILE') in before running"
 else
-  fail "WORKSPACE_NAME is NOT set — the Genie MCP URL needs it. Fix:  source ./sandbox_env.sh  (derives it from the '$CFG_PROFILE' profile)"
+  fail "genie_one URL is the <workspace-host> placeholder AND no host resolves for profile '$CFG_PROFILE' — run: databricks auth login -p $CFG_PROFILE (or set \$DATABRICKS_HOST)"
 fi
 
 # Auth is by PROFILE now — models and the Genie MCP each mint their own token from

@@ -96,7 +96,7 @@ cat <<EOF
      so there is NO token to export:
        databricks auth login -p $CONFIG_PROFILE
 
-  2) Run it — run_local.sh sets WORKSPACE_NAME (the Genie host) from the profile:
+  2) Run it — run_local.sh writes the Genie MCP host into config.yaml from the profile:
        ./run_local.sh -p "I want to build a churn-risk dashboard"          # interactive
        ./run_local.sh --auto -p "I want to build a churn-risk dashboard"   # end-to-end
 

@@ -1,36 +1,57 @@
 #!/usr/bin/env bash
 #
-# run_local.sh — tiny wrapper: derive WORKSPACE_NAME (the Genie MCP URL host)
-# from your Databricks profile, then `omnigent run .`. That host is the only
-# thing Omnigent needs from the environment — all auth (models + Genie) comes
-# from the profile pinned in config.yaml, so there's nothing else to set.
+# run_local.sh — prepare and run ontogent (works on macOS and on a Linux sandbox).
 #
-#   ./run_local.sh -p "your goal"                    # interactive (pauses at the plan)
+# Omnigent spawns its runner with a scrubbed environment, so neither the Genie MCP
+# host nor the auth profile in config.yaml can be an env var — both must be literals.
+# So before running, this script writes two things into the config files from your
+# chosen Databricks profile:
+#   • the profile's workspace HOST into config.yaml's `genie_one` URL, and
+#   • the PROFILE name into every `auth.profile` (config.yaml + agents/*/config.yaml).
+# The repo ships the portable defaults (a `<workspace-host>` placeholder + the DEFAULT
+# profile); this localizes them for the run. All auth — models AND Genie — is by
+# profile, so there is no token to set.
+#
+#   ./run_local.sh -p "your goal"                    # interactive (uses config.yaml's profile)
 #   ./run_local.sh --auto -p "your goal"             # auto-approve, end-to-end
-#   DATABRICKS_PROFILE=<name> ./run_local.sh -p ...  # host from a different profile (default: ci-demo)
-#
-# (Not required — you can instead `export WORKSPACE_NAME=<host>` once and run
-#  `omnigent run . -p ...` directly.)
+#   DATABRICKS_PROFILE=<name> ./run_local.sh -p ...  # run under a different profile everywhere
 #
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Seed the (gitignored) runtime ontology file from the template on first run.
-[ -f ontology_context.md ] || cp ontology_context.md.template ontology_context.md 2>/dev/null || true
+# Profile: explicit override, else the auth.profile literal already in config.yaml.
+cfg_profile="$(awk '/^[[:space:]]*profile:/ {v=$2; sub(/#.*/,"",v); print v; exit}' config.yaml 2>/dev/null || true)"
+PROFILE="${DATABRICKS_PROFILE:-${cfg_profile:-DEFAULT}}"
 
-PROFILE="${DATABRICKS_PROFILE:-DEFAULT}"
-
-# WORKSPACE_NAME = the profile's workspace host (no scheme / trailing slash),
-# read straight from ~/.databrickscfg.
-ws="$(awk -v p="[$PROFILE]" '
+# Derive the workspace host (no scheme / trailing slash): the profile's host in
+# ~/.databrickscfg, else $DATABRICKS_HOST (some sandboxes provide it that way).
+host="$(awk -v p="[$PROFILE]" '
   $0==p{f=1;next} /^\[/{f=0}
-  f&&/^host/{sub(/^host[[:space:]]*=[[:space:]]*/,"");print;exit}
-' "$HOME/.databrickscfg" 2>/dev/null)"
-ws="${ws#http://}"; ws="${ws#https://}"; ws="${ws%/}"
-[ -n "$ws" ] || { echo "run_local.sh: no host for profile '$PROFILE' in ~/.databrickscfg" >&2; exit 1; }
-export WORKSPACE_NAME="$ws"
+  f && /^host/ {sub(/^host[[:space:]]*=[[:space:]]*/,""); print; exit}
+' "$HOME/.databrickscfg" 2>/dev/null || true)"
+host="${host:-${DATABRICKS_HOST:-}}"
+host="${host#http://}"; host="${host#https://}"; host="${host%/}"
+[ -n "$host" ] || { echo "run_local.sh: no host for profile '$PROFILE' in ~/.databrickscfg and \$DATABRICKS_HOST is unset (try: databricks auth login -p $PROFILE)" >&2; exit 1; }
 
-# --auto → fold an auto-approve directive into the -p goal; all other args pass through.
+# Localize the config for this run (portable in-place edits via tmpfile+mv):
+#   1. the genie_one URL host  — replaces <workspace-host> or any prior host.
+#   2. every `auth.profile:`   — in config.yaml and each agents/*/config.yaml,
+#      preserving indentation and any trailing comment.
+# NOTE: this rewrites tracked files. The concrete host is your workspace's — keep
+# it out of the PUBLIC repo: only ever commit the `<workspace-host>` placeholder.
+# To restore the committed placeholder before committing:  git checkout -- config.yaml
+localize() {  # $1 = file
+  local f="$1" tmp; tmp="$(mktemp)"
+  sed -E \
+    -e "s#(url:[[:space:]]*\"?https?://)[^/\"]*(/api/2\.0/mcp/genie)#\1${host}\2#" \
+    -e "s#^([[:space:]]*profile:[[:space:]]*)[^[:space:]#]+#\1${PROFILE}#" \
+    "$f" > "$tmp" && mv "$tmp" "$f"
+}
+localize config.yaml
+for a in agents/*/config.yaml; do [ -f "$a" ] && localize "$a"; done
+echo "run_local.sh: localized profile='${PROFILE}', genie_one host='${host}' (config.yaml + agents/*/config.yaml)"
+
+# --auto folds an auto-approve directive into the -p goal; other args pass through.
 auto=0; prompt=""; have_p=0; pass=()
 while [ $# -gt 0 ]; do
   case "$1" in

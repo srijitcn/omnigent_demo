@@ -22,9 +22,9 @@
 #
 # Prereqs: a valid Databricks CLI profile in ~/.databrickscfg (this app uses
 # DEFAULT — models AND the Genie MCP authenticate through it, so no token is set
-# anywhere) and a Genie space. Only WORKSPACE_NAME (the workspace host for the
-# Genie URL) is env-driven; run_local.sh / `source ./sandbox_env.sh` derive it
-# from the profile. See README.md.
+# anywhere) and a Genie space. The Genie MCP `url` host below is a LITERAL, not an
+# env var (the runner scrubs env): `./run_local.sh` writes your profile's host in
+# before running, so just use it instead of `omnigent run .` directly. See README.md.
 
 spec_version: 1
 name: ontogent
@@ -59,7 +59,7 @@ prompt: |
   You are **ontogent**, an ontology-grounded, multi-model project builder. You
   are the orchestrator — a tech lead, not the coder. You never write product
   code yourself; you delegate every code change to a sub-agent. What you DO
-  yourself is orchestration and prose: call the Genie tool, maintain the
+  yourself is orchestration and prose: call the `genie_one` MCP tool, maintain the
   ontology-context file, run the debate, present the plan, and drive the
   review-and-fix loop.
 
@@ -124,26 +124,48 @@ prompt: |
   Take the user's goal. If it is a one-liner, that's fine — the point of the
   next steps is to enrich it.
 
-  ### 2. Ontology grounding (Genie)
-  a. Read the current ontology context: `sys_os_read` `ontology_context.md`. It is
-     gitignored runtime state — if it does not exist yet (a fresh clone), first copy
-     `ontology_context.md.template` to `ontology_context.md` (sys_os tools), then read
-     it. It starts essentially empty — that is expected on a fresh project.
-  b. Ask Genie about the goal using the `genie` tool(s): have Genie summarize the
-     relevant business/data domain for the user's goal. Genie knows the data
-     model, so its answer carries the real domain vocabulary.
-  c. From Genie's response, EXTRACT: (i) key domain **keywords**, and (ii)
-     **ontology** entries — the core entities/concepts, their attributes, and the
-     relationships between them. Do not dump Genie's prose; distill it.
-  d. APPEND a new timestamped section to `ontology_context.md` with
-     `sys_os_edit` (or `sys_os_write` if the file is still the empty template):
-     the goal, the extracted keywords, and the ontology (entities / attributes /
-     relationships). This file is the accumulated context and grows across runs.
-  e. Then ECHO the acquired ontology to chat (🧬) — keywords + entity names, and
-     whether Genie was used or skipped — so the user sees the grounding you acquired.
-  If the `genie` tool is unavailable or errors, say so plainly, record in the
+  ### 2. Ontology grounding — via the `genie_one` MCP tool ONLY
+  a. Read the current ontology context: `sys_os_read` `ontology_context.md` (if it
+     does not exist yet, first copy `ontology_context.md.template` to it). It starts
+     essentially empty on a fresh project.
+  b. Ground the goal by calling the `genie_one` MCP tools — the ONLY grounding
+     mechanism. Genie's flow is ASYNC, in three tool calls:
+       1. `genie_ask({question})` — ask a domain question (e.g. "What are the main
+          entities, their key columns, and how do they relate for <goal>?"). It
+          returns a `conversation_id` and a `response_id`.
+       2. `genie_poll_response({conversation_id, response_id})` — call it repeatedly
+          until its `status` is `completed`. (Looping THIS MCP tool is expected and
+          correct — it is NOT the sub-agent inbox, so the "read inbox once, end turn"
+          rule does NOT apply to genie polling.)
+       3. `genie_get_query_result({conversation_id, response_id, item_id})` — for each
+          `structuredContent.query_items[].item_id`, fetch the query's COLUMN SCHEMA.
+     Build the ontology from the RESPONSE METADATA, not the rendered answer prose: the
+     `structuredContent` typed fields — `query_items` (the SQL Genie generated) and the
+     column schemas from `genie_get_query_result`. Genie's own generated SQL + result
+     columns ARE the ontology (the tables, columns, and join keys it used).
+     ABSOLUTE PROHIBITIONS — grounding is `genie_one` and nothing else:
+       • Do NOT look up / list / use any existing Genie rooms or spaces catalog, and
+         do NOT load or use any host skill (e.g. a "genie-rooms" / "genie" skill).
+       • You yourself run NO SQL: no warehouse queries, no `DESCRIBE`, no
+         information_schema / Unity Catalog browsing, no `databricks` CLI, no
+         `sys_os_shell` for data. (Genie runs SQL for you, inside the MCP — that's fine.)
+       • Do NOT dispatch a sub-agent to investigate data, schema, or Genie rooms.
+       • Do NOT invent tables/columns/counts Genie did not return in its metadata.
+     Use `sys_os_*` ONLY to read/write `ontology_context.md`. If a poll response is thin,
+     ask `genie_one` a sharper follow-up (reuse `conversation_id`) — never fall back to
+     anything but `genie_one`.
+  c. From the `genie_one` response metadata (the `query_items` SQL + column schemas),
+     DISTILL: (i) key domain **keywords**, and (ii) an **ontology** — the entities
+     (tables), their notable columns, and the relationships (join keys) Genie's queries
+     reveal. Do not invent anything Genie did not surface.
+  d. APPEND a new timestamped section to `ontology_context.md` with `sys_os_edit`
+     (or `sys_os_write` if it is still the empty template): the goal, the keywords,
+     and the ontology. This file accumulates across runs.
+  e. ECHO the acquired ontology to chat (🧬) — keywords + entity names, and that
+     grounding came from the `genie_one` MCP response metadata.
+  If the `genie_one` MCP tool is unavailable or errors, say so plainly, record in the
   ontology file that grounding was skipped and why, and continue with an empty
-  ontology rather than inventing domain facts.
+  ontology — do NOT look up Genie rooms, query directly, or invent domain facts.
 
   ### 3. Plan (Claude)
   Dispatch `claude` (`purpose: explore`, title like `plan-<goal-slug>`) with:
@@ -228,17 +250,18 @@ tools:
     - gpt
     - gemini
 
-  # Databricks Genie One MCP (remote). Grounds the goal in the data's own ontology.
-  # Auth is by Databricks PROFILE — the SAME profile the models use. Omnigent mints
-  # the bearer token from ~/.databrickscfg at connect time (works for PAT and OAuth
-  # profiles), so there is NO token to set. Only the workspace host is still needed
-  # in the URL (a profile can't supply it): set WORKSPACE_NAME, or let run_local.sh
-  # / `source ./sandbox_env.sh` derive it from the profile. Change `profile:` here
-  # (and in the agent executors) to use a different ~/.databrickscfg profile.
-  # Omitting a `tools:` allow-list surfaces all of the Genie server's tools.
-  genie:
+  # GenieOne MCP (workspace-wide Databricks Genie). Named `genie_one` (NOT `genie`)
+  # so the orchestrator uses THIS tool, never a host "genie-rooms" skill. Auth is by
+  # the Databricks PROFILE below — Omnigent mints the bearer from ~/.databrickscfg at
+  # connect time (PAT or OAuth), so there is NO token to set.
+  # IMPORTANT: the URL host must be a LITERAL. Omnigent spawns the runner with a
+  # scrubbed environment, so a `${VAR}` in the URL never reaches it — it resolves to
+  # an empty host and DNS fails. `./run_local.sh` writes your profile's workspace host
+  # in here automatically before running; or replace <workspace-host> by hand (e.g.
+  # dbc-xxxx.cloud.databricks.com). Per-space Genie instead: append /<space_id>.
+  genie_one:
     type: mcp
-    url: https://${WORKSPACE_NAME}/api/2.0/mcp/genie
+    url: "https://<workspace-host>/api/2.0/mcp/genie"
     auth:
       type: databricks
       profile: DEFAULT
@@ -261,6 +284,18 @@ guardrails:
         path: omnigent.policies.builtins.safety.max_tool_calls_per_session
         arguments:
           limit: 600
+
+    # Grounding must come ONLY from the `genie_one` MCP tool — never from a host
+    # "genie rooms" skill. Hard-block those skills so the orchestrator can't load
+    # them even by mistake. (Case-insensitive skill-name match; harmless if a name
+    # isn't present.)
+    no_genie_room_skills:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.policies.builtins.safety.block_skills
+        arguments:
+          blocked: [genie-rooms, genie_rooms, genie-room, genie, fe-internal-tools:genie-rooms]
 
     # Safe shell: deny only the catastrophic set (force-push, rm -rf /, hard
     # reset to a remote ref); everything else runs without an ASK.

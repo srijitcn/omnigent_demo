@@ -79,20 +79,20 @@ tracked file.
    ```
 4. **A Genie space.** Auth is by **profile** — the Genie MCP (like the models)
    mints its own bearer token from the `DEFAULT` profile at runtime, so there is
-   **no token to set**. The only env var is `WORKSPACE_NAME` (the workspace host
-   for the MCP URL), and `run_local.sh` / `source ./sandbox_env.sh` derive it from
-   the profile:
-   ```bash
-   export WORKSPACE_NAME=<your-workspace-host>   # e.g. dbc-xxxx.cloud.databricks.com (no scheme)
-   ```
-   The MCP URL in `config.yaml` resolves to `https://${WORKSPACE_NAME}/api/2.0/mcp/genie`,
-   and it authenticates via `auth: {type: databricks, profile: DEFAULT}`.
+   **no token to set**. The Genie MCP `url` in `config.yaml` needs your workspace
+   host, but it must be a **literal** — Omnigent spawns its runner with a scrubbed
+   environment, so an env var in the URL never reaches it (it resolves to an empty
+   host and DNS fails). `run_local.sh` handles this for you: it reads the host from
+   your Databricks profile and writes it into `config.yaml`'s `genie_one` URL before
+   running. The URL then reads `https://<your-host>/api/2.0/mcp/genie` and
+   authenticates via `auth: {type: databricks, profile: DEFAULT}`. (To set it by
+   hand instead, replace `<workspace-host>` in the `genie_one` `url`.)
 
 ## Run
 
-Easiest — `run_local.sh` derives `WORKSPACE_NAME` from your Databricks profile and
-runs it. All auth — the models and the Genie MCP — comes from the profile, so
-there's no token to set:
+Easiest — `run_local.sh` writes your profile's workspace host into the Genie MCP
+URL, then runs. All auth — the models and the Genie MCP — comes from the profile,
+so there's no token to set:
 
 ```bash
 # interactive — pauses at the plan for your approval, then builds:
@@ -107,18 +107,17 @@ DATABRICKS_PROFILE=workshop ./run_local.sh -p "..."
 
 The profile must be valid (`databricks auth profiles`); if not: `databricks auth login -p <profile>`.
 
-Manual equivalent (the profile supplies all auth; you set only the host):
-```bash
-export WORKSPACE_NAME=<your-workspace-host>          # no scheme, e.g. dbc-xxxx.cloud.databricks.com
-export DATABRICKS_CONFIG_PROFILE=DEFAULT             # models + Genie authenticate via this profile
-omnigent run . -p "I want to build ..."
-```
+Running `omnigent run .` directly works too, but only **after** the `genie_one`
+`url` in `config.yaml` has a real host in place of `<workspace-host>` — that's the
+one thing `run_local.sh` does for you (the runner scrubs env vars, so the host
+can't be one). The profile still supplies all auth.
 
-**On a Databricks sandbox** (no `~/.databrickscfg` editing needed — the profile is baked):
+**On a Databricks sandbox** the profile is baked in, so it works the same way —
+`run_local.sh` reads the host from the profile (or `$DATABRICKS_HOST`) and writes
+it in, on Linux too:
 ```bash
-source ./sandbox_env.sh     # sets WORKSPACE_NAME from the DEFAULT profile
-./verify_sandbox.sh         # confirms tools, SDKs, profile auth, and files
-omnigent run . -p "..."
+./verify_sandbox.sh                    # confirms tools, SDKs, profile auth, and the Genie host
+./run_local.sh --auto -p "..."         # writes the host into config.yaml, then runs
 ```
 
 The run narrates each step — 🎯 goal, 🧬 the ontology it acquired (keywords +
@@ -142,8 +141,11 @@ at `:6767` for the web UI / phone, with shareable live sessions.)
 - **Auth**: one Databricks **profile** (`DEFAULT`) drives everything — models via
   `executor.auth`, the Genie MCP via `auth: {type: databricks, profile}`. No token
   env var. Change the profile in `config.yaml` + `agents/*/config.yaml` to switch.
-- **Sandbox**: `source ./sandbox_env.sh` (sets `WORKSPACE_NAME` from the profile),
-  then `./verify_sandbox.sh` to confirm readiness.
+- **Sandbox**: `./verify_sandbox.sh` confirms readiness (tools, SDKs, profile auth,
+  and that a Genie host resolves), then `./run_local.sh` writes the host in and runs.
+- **Genie MCP host**: it's a literal in `config.yaml` (the runner scrubs env vars,
+  so it can't be `${VAR}`). `run_local.sh` writes your profile's host in before each
+  run; the committed repo ships the `<workspace-host>` placeholder.
 - **Ontology grows**: `ontology_context.md` accumulates across runs — later goals
   reuse earlier grounding.
 - The default `model:` ids follow the Omnigent docs' examples; swap them for the
