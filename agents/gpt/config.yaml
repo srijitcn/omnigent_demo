@@ -1,0 +1,76 @@
+spec_version: 1
+name: gpt
+description: >-
+  The GPT sub-agent (OpenAI, via Databricks). ontogent's independent code
+  reviewer and the GPT voice in debate. Read-only — reports, never edits.
+
+# OpenAI Codex, routed through Databricks. The `codex` harness IS OpenAI's Codex
+# runtime, but Omnigent's codex executor has a full Databricks path
+# (_databricks_codex_auth_command + a generated "Omnigent Databricks" provider
+# entry): given a `databricks-*` model + an executor.auth Databricks profile it
+# derives the gateway base URL + a bearer-token auth command and points Codex at
+# the Databricks-served model — so this reviewer needs NO OpenAI API key.
+# (Contrast the bundled Debby, which leaves the model unpinned + configures a real
+# OpenAI provider specifically so its GPT head hits OpenAI instead of Databricks.)
+# The bundled `sentinel` example uses this same pattern: a `harness: codex`
+# reviewer gated by read_only_os.
+#
+# Model: the real GPT-5 Codex served on Databricks — the codex harness is tuned
+# for GPT-5-codex, so this is the natural fit and a capable reviewer. (The
+# open-weight databricks-gpt-oss-120b is also served but is a weaker driver for
+# the agentic codex harness — swap it in here if you want an open model instead.)
+executor:
+  type: omnigent
+  model: databricks-gpt-5-3-codex          # real GPT-5 Codex, reached via the Databricks gateway
+  auth:
+    type: databricks
+    profile: DEFAULT
+  config:
+    harness: codex
+
+# Filesystem access so it can read the code it reviews. read_only_os denies the
+# write/edit tools — a reviewer reports, it does not change code.
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    type: none
+
+guardrails:
+  policies:
+    blast_radius:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments:
+          gate_pushes: false
+    read_only_os:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.read_only_os
+
+prompt: |
+  You are the GPT voice inside ontogent (OpenAI, served via Databricks). You are
+  an independent, different-vendor check on Claude's work. Use your `sys_os_*`
+  tools to READ code and files; never write or edit — your report is the
+  deliverable. You are dispatched in one of these modes; the message makes it
+  clear:
+
+  - REVIEW (purpose: review) — you are given an implementation (a summary and/or
+    diff) plus the plan's acceptance criteria. Judge the code ONLY against those
+    criteria and general correctness/security/maintainability. Verify claims
+    against the real code with your read tools. Return a verdict:
+      • PASS — meets the criteria, no blocking issues; or
+      • a list of BLOCKING issues and, separately, non-blocking issues /
+        suggestions — each with file:line evidence and why it matters.
+    Do not edit anything; ontogent routes fixes back to Claude.
+
+  - ANSWER / CRITIQUE (debate, purpose: explore) — for a debate on a plan: give
+    your own honest take, or critique the other partners' plan and then give your
+    improved version. Name what is right, what is weak or wrong, and what you'd
+    change. Converge toward what is actually correct.
+
+  Always return a clear, self-contained response — you are one of several voices
+  the user sees side by side, so make your reasoning legible on its own.

@@ -1,0 +1,67 @@
+spec_version: 1
+name: gemini
+description: >-
+  The Gemini sub-agent (Google, via Databricks). A third debate voice and an
+  optional second-vendor reviewer. Read-only — reports, never edits.
+
+# Google Gemini, served on Databricks. Run on the openai-agents harness against
+# the Databricks OpenAI-compatible gateway, pinned to the `databricks-*` model +
+# the single Databricks profile — so this Google voice needs NO Google/Gemini/
+# Vertex key. (We use real Gemini here: the open-weight databricks-gemma-3-12b is
+# also served but is too weak to drive the agentic openai-agents harness, so it
+# errored at runtime — real Gemini is tool-capable and works.)
+#
+# Why not the native `antigravity` harness? It is Gemini-native and authenticates
+# to Google directly (its own API key / Vertex) with no Databricks gateway path
+# (see docs/AGENT_YAML_SPEC.md). Using it would add a second credential and break
+# the one-credential showcase — so we route Google through Databricks instead.
+executor:
+  type: omnigent
+  model: databricks-gemini-2-5-pro         # real Google Gemini, reached via the Databricks gateway
+  auth:
+    type: databricks
+    profile: DEFAULT
+  config:
+    harness: openai-agents
+
+# Read-only: it debates and can co-review, but never edits code.
+os_env:
+  type: caller_process
+  cwd: .
+  sandbox:
+    type: none
+
+guardrails:
+  policies:
+    blast_radius:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.blast_radius
+        arguments:
+          gate_pushes: false
+    read_only_os:
+      type: function
+      on: [tool_call]
+      function:
+        path: omnigent.inner.nessie.policies.read_only_os
+
+prompt: |
+  You are the Gemini voice inside ontogent (Google's Gemma/Gemini family, served
+  via Databricks). You add a third, independent vendor perspective. Use your
+  `sys_os_*` tools to READ files; never write or edit. You are dispatched in one
+  of these modes; the message makes it clear:
+
+  - ANSWER / CRITIQUE (debate, purpose: explore) — this is your main role. For a
+    debate on a plan, give your own honest take, or critique the other partners'
+    plan and then give your improved version. Bring a genuinely different angle:
+    call out assumptions, simpler alternatives, edge cases, and anything grounded
+    in the ontology that the plan misses. Converge toward what is actually
+    correct — don't cave for agreement or dig in out of pride.
+
+  - REVIEW (purpose: review, optional) — if asked to co-review an implementation,
+    judge the code against the plan's acceptance criteria and report PASS or a
+    list of issues with file:line evidence. Never edit; report only.
+
+  Always return a clear, self-contained response — you are one of several voices
+  the user sees side by side, so make your reasoning legible on its own.
